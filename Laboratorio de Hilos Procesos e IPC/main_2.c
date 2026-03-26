@@ -1,162 +1,162 @@
+// Se modifica el programa main_1
+// Para que ahora la multiplicacion de matrices se realice
+// usando hilos. Por cada celda de la matriz
+// resultante se crea un pthread que se encarga de calcular su valor
+
 #include <stdio.h>
-#include <pthread.h>
-#include <unistd.h>
 #include <sys/time.h>
 #include <time.h>
 #include <math.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
 
-/*
-
-Básicamente a diferencia del primer codigo main_1
-En este se crean hilos para cada bloque de filas de la matriz resultante
-
-Por ejemplo, si se recibe una matriz de 6x7 para dar un ejemplo sencillo de entender
-y se decide usar 4 hilos, cada hilo se encargará de multiplicar un bloque de filas de la matriz resultante.
-- Hilo 1: Multiplica las filas 0 y 1 de la matriz resultante.
-- Hilo 2: Multiplica las filas 2 y 3 de la matriz resultante.
-- Hilo 3: Multiplica la fila 4 de la matriz resultante.
-- Hilo 4: Multiplica la fila 5 de la matriz resultante.
-
-Esta distribucion permite que cada hilo trabaje en paralelo en su bloque de filas, lo que puede mejorar el 
-rendimiento al aprovechar múltiples núcleos de CPU. Además, se asegura de que no haya conflictos entre los hilos, 
-ya que cada uno trabaja en un bloque de filas distinto de la matriz resultante.
-
-*/
-
-
-// struct para pasar datos a los hilos
+// se debe crear un struct para pasar los datos a los hilos
 typedef struct {
-    long start_row;
-    long end_row;
-    long m;          
-    long n;          
-    long *matrizMN;  
-    long *matrizNM; 
-    long *matrizResultante; 
-} ThreadData;
+    long start_row; // fila inicial del bloque de filas a multiplicar
+    long end_row;   // fila final del bloque de filas a multiplicar
+    long m;          // tamaño de la matriz resultante (m x m)
+    long n;          // tamaño de la matriz intermedia (m x n)
+    long *matrizMN;  // matriz MN (m x n)
+    long *matrizNM;  // matriz NM (n x m)
+    long *matrizResultante; // matriz resultante (m x m)
+} ThreadData;       // el struct se llama ThreadData y se usará para pasar los datos a cada hilo
 
-long* llenar_matriz(long n, long m) {
-    long *matriz = malloc(n * m * sizeof(long));
-    if (matriz == NULL) {
-        return NULL;
-    }
-
+void llenar_matriz(long *matriz, long n, long m) {
     for (long i = 0; i < n; i++) {
         for (long j = 0; j < m; j++) {
             matriz[i * m + j] = rand() % 5 + 1;
         }
     }
-    return matriz;
 }
 
-// Hilo para multiplicar un bloque de filas de la matriz resultante
 void* multiplicar(void* arg) {
     ThreadData *data = (ThreadData*)arg;
     
-    for (long i = data->start_row; i < data->end_row; i++) {
-        for (long j = 0; j < data->m; j++) {
+    for (long fila = data->start_row; fila < data->end_row; fila++) {
+        for (long col = 0; col < data->m; col++) {
             long sum = 0;
             for (long k = 0; k < data->n; k++) {
-                sum += data->matrizMN[i * data->n + k] * data->matrizNM[k * data->m + j];
+                sum += data->matrizMN[fila * data->n + k] * data->matrizNM[k * data->m + col];
             }
-            data->matrizResultante[i * data->m + j] = sum;
+            data->matrizResultante[fila * data->m + col] = sum;
         }
     }
-    
+
     return NULL;
+
 }
+
 
 int main(int argc, char** argv) {
     struct timeval start, end;
 
     if (argc != 3) {
-        fprintf(stderr, "Usage: %s <number_1> <number_2>\n", argv[0]);
+        fprintf(stderr, "Uso: %s <N> <M>\n", argv[0]);
         return 1;
     }
 
-    long n = atoi(argv[1]);
-    long m = atoi(argv[2]);
-    
-    // Se determina el número de hilos a usar, basado en el número de núcleos disponibles
-    int num_threads = sysconf(_SC_NPROCESSORS_ONLN); // cuantos nucleos tiene el CPU
-    if (num_threads > m) num_threads = m; // No usar más hilos que filas
-    
-    long *matrizNM = NULL;
-    long *matrizMN = NULL;
-    long *matrizResultante = NULL;
+    int cores = (int)sysconf(_SC_NPROCESSORS_ONLN); // obtener cantidad de núcleos disponibles
+    if (cores < 1) {
+        cores = 1;
+    }
+
+    long n = atol(argv[1]);
+    long m = atol(argv[2]);
+    if (n <= 0 || m <= 0) {
+        fprintf(stderr, "N y M deben ser mayores a 0\n");
+        return 1;
+    }
+
+    long num_threads = (long)cores * 2; // cantidad de hilos a usar, se puede ajustar según el tamaño de la matriz
+    if (num_threads > m) {
+        num_threads = m;
+    }
+    if (num_threads < 1) {
+        num_threads = 1;
+    }
+
+    printf("Cores disponibles: %d\n", cores);
+    printf("Se usarán %ld hilos\n", num_threads);
+
+    long *matrizNM = malloc(n * m * sizeof(long));
+    long *matrizMN = malloc(m * n * sizeof(long));
+    long *matrizMM = malloc(m * m * sizeof(long));
+
+    if (matrizNM == NULL || matrizMN == NULL || matrizMM == NULL) {
+        fprintf(stderr, "Error alocando memoria\n");
+        free(matrizNM);
+        free(matrizMN);
+        free(matrizMM);
+        return 1;
+    }
+
+    srand(time(NULL));
 
     double tiempos[100];
 
-    srand(time(NULL)); 
-    
-    for (int ciclo = 0; ciclo < 100; ciclo++) { // 100 ciclos
-        matrizNM = llenar_matriz(n, m);
-        matrizMN = llenar_matriz(m, n);
-        matrizResultante = malloc(m * m * sizeof(long));
-
-        if (matrizNM == NULL || matrizMN == NULL || matrizResultante == NULL) {
-            fprintf(stderr, "Error allocating memory for matrices\n");
-            return 1;
-        }
+    for (int ciclo = 0; ciclo < 100; ciclo++) {
 
         gettimeofday(&start, NULL);
-        
-        // creacion de threads
-        pthread_t threads[num_threads];
-        ThreadData thread_data[num_threads];
-        
-        long rows_per_thread = m / num_threads;
-        long remaining_rows = m % num_threads;
-        long current_row = 0;
-        
-        for (int t = 0; t < num_threads; t++) {
-            long rows_for_this_thread = rows_per_thread + (t < remaining_rows ? 1 : 0);
-            
-            thread_data[t].start_row = current_row;
-            thread_data[t].end_row = current_row + rows_for_this_thread;
-            thread_data[t].m = m;
-            thread_data[t].n = n;
-            thread_data[t].matrizMN = matrizMN;
-            thread_data[t].matrizNM = matrizNM;
-            thread_data[t].matrizResultante = matrizResultante;
-            
-            pthread_create(&threads[t], NULL, multiplicar, &thread_data[t]);
-            
-            current_row += rows_for_this_thread;
+
+        llenar_matriz(matrizNM, n, m);
+        llenar_matriz(matrizMN, m, n);
+
+        pthread_t threads[num_threads]; // se define cantidad de hilos a usar
+        ThreadData thread_data[num_threads]; // se define un arreglo de ThreadData para pasar los datos a cada hilo
+
+        long filas_base = m / num_threads; // cantidad de filas que cada hilo debe procesar
+        long sobrantes = m % num_threads; // filas que sobran después de dividir entre los hilos, se asignarán a los primeros 'sobrantes' hilos
+        long fila_actual = 0;
+
+        for (long i = 0; i < num_threads; i++) {
+            long extra = (i < sobrantes) ? 1 : 0;
+            thread_data[i].start_row = fila_actual;
+            thread_data[i].end_row = fila_actual + filas_base + extra;
+            thread_data[i].m = m;
+            thread_data[i].n = n;
+            thread_data[i].matrizMN = matrizMN;
+            thread_data[i].matrizNM = matrizNM;
+            thread_data[i].matrizResultante = matrizMM;
+
+            if (pthread_create(&threads[i], NULL, multiplicar, &thread_data[i]) != 0) {
+                fprintf(stderr, "Error creando hilo %ld\n", i);
+                return 1;
+            }
+
+            fila_actual = thread_data[i].end_row;
         }
-        
-        // esperar a que lo hilos terminen para juntarlos
-        for (int t = 0; t < num_threads; t++) {
-            pthread_join(threads[t], NULL);
+
+        for (long i = 0; i < num_threads; i++) { // se espera a que todos los hilos terminen para juntar los resultados
+            if (pthread_join(threads[i], NULL) != 0) {
+                fprintf(stderr, "Error esperando hilo %ld\n", i);
+                return 1;
+            }
         }
-        
+
         gettimeofday(&end, NULL);
-        double tiempo = (double)(end.tv_sec - start.tv_sec) + 
-                       (double)(end.tv_usec - start.tv_usec) / 1000000.0;
-        tiempos[ciclo] = tiempo;
-        printf("Tiempo para ciclo %d: %f segundos\n", ciclo + 1, tiempo);
+
+        printf("Ciclo %d: Tiempo de ejecución: %f segundos\n", ciclo + 1, (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0);
+        
+        tiempos[ciclo] = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
     }
-    
+
     free(matrizNM);
     free(matrizMN);
-    free(matrizResultante);
+    free(matrizMM);
 
-    // Calcular el tiempo promedio    
+
+    // Tiempo promedio
     double suma = 0.0;
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 100; i++)
         suma += tiempos[i];
-    }
+    printf("Tiempo promedio: %f segundos\n", suma / 100.0);
+
+    // Desviación estándar
     double promedio = suma / 100.0;
-    printf("Tiempo promedio: %f segundos\n", promedio);
+    double suma_desviacion = 0.0;
+    for (int i = 0; i < 100; i++)
+        suma_desviacion += pow(tiempos[i] - promedio, 2);
+    printf("Desviación estándar: %f segundos\n", sqrt(suma_desviacion / 100.0));
 
-    // Calcular la desviación estándar
-    double desviacion = 0.0;
-    for (int i = 0; i < 100; i++) {
-        desviacion += pow(tiempos[i] - promedio, 2);
-    }
-    desviacion = sqrt(desviacion / 100.0);
-    printf("Desviación estándar: %f segundos\n", desviacion);
-
-    return 0;
 }
